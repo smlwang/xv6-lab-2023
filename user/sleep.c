@@ -5,7 +5,7 @@ int
 main(int argc, char *argv[])
 {
   if (argc != 2) {
-    const char *usage = "usage: sleep <seconds>\n";
+    const char *usage = "Usage: sleep <seconds>\n";
     write(1, usage, strlen(usage));
     exit(1);
   }
