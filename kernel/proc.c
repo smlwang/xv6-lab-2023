@@ -43,6 +43,24 @@ proc_mapstacks(pagetable_t kpgtbl)
   }
 }
 
+// count number of proc without unused
+uint64
+proccount(void)
+{
+  uint64 count = 0;
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state != UNUSED) {
+      count += 1;
+    }
+    release(&p->lock);
+  }
+
+  return count;
+}
+
 // initialize the proc table.
 void
 procinit(void)

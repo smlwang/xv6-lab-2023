@@ -2,6 +2,7 @@
 #include "riscv.h"
 #include "defs.h"
 #include "param.h"
+#include "sysinfo.h"
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
@@ -98,5 +99,22 @@ sys_trace(void)
   int tracemask;
   argint(0, &tracemask);
   myproc()->tracemask = tracemask;
+  return 0;
+}
+
+uint64
+sys_sysinfo(void)
+{
+  struct proc *p = myproc();
+  uint64 info; // user point to struct sysinfo
+  argaddr(0, &info);
+
+  struct sysinfo sysinfo;
+  sysinfo.freemem = freecount();
+  sysinfo.nproc = proccount();
+
+  if (copyout(p->pagetable, info, (char *)&sysinfo, sizeof(sysinfo)) < 0) {
+    return -1;
+  }
   return 0;
 }
