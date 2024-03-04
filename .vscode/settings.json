@@ -1,0 +1,12 @@
+{
+    "clangd.fallbackFlags": [
+        "-I${workspaceFolder}"
+    ],
+    "clangd.arguments": [
+        "--completion-style=detailed",
+        "-j=4",
+        "--clang-tidy",
+        "--suggest-missing-includes",
+        "--header-insertion=iwyu",
+    ]
+}
