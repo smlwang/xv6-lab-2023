@@ -68,13 +68,41 @@ sys_sleep(void)
   release(&tickslock);
   return 0;
 }
-
-
+// #define LAB_PGTBL
 #ifdef LAB_PGTBL
 int
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  uint64 base; // address to access
+  int len;
+  uint64 mask; // address of return value;
+
+  argaddr(0, &base);
+  argint(1, &len);
+  argaddr(2, &mask);
+
+  if (len > 32) {
+    len = 32;
+  }
+  pagetable_t pagetable = myproc()->pagetable;
+  // printf("base: %p\n", base);
+  // vmprint(pagetable);
+  pte_t *pte;
+  int access_mask = 0;
+  for (int page = 0; page < len; page++) {
+    if ((pte = walk(pagetable, base, 0)) == 0) {
+      return -1;
+    }
+    base += PGSIZE;
+    if (*pte & PTE_A) {
+      access_mask |= 1L << page;
+      *pte ^= PTE_A; // reset PTE_A flag
+    }
+  }
+  // printf("%p\n", access_mask);
+  if (copyout(pagetable, mask, (char *)&access_mask, sizeof(access_mask)) < 0) {
+    return -1;
+  }
   return 0;
 }
 #endif
