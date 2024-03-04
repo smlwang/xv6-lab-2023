@@ -93,3 +93,46 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_sigalarm(void)
+{
+  int ticks;
+  uint64 handler;
+  argint(0, &ticks);
+  argaddr(1, &handler);
+  if (ticks < 0) {
+    return -1;
+  }
+
+  struct proc *p = myproc();
+  struct alarm *a = p->alarm;
+  if (ticks == 0 && handler == 0) {
+    a->flag = A_UNUSABLE;
+    return 0;
+  }
+  if (a->flag == A_RUNNING) {
+    return -1;
+  }
+  a->flag = A_ENABLE;
+  a->handle = handler;
+  a->interval = ticks;
+  a->tick = 0;
+  return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  struct proc *p = myproc();
+  struct alarm* a = p->alarm;
+  p->context = a->oldcontext;
+  *p->trapframe = a->oldframe;
+  // user may unset alarm,
+  // we shouldn't set unusable to enable.
+  if (a->flag == A_RUNNING) {
+    a->flag = A_ENABLE;
+  }
+  a->tick = 0;
+  return a->oldframe.a0; // old a0
+}

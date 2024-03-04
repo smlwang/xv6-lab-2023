@@ -13,7 +13,7 @@ extern char trampoline[], uservec[], userret[];
 
 // in kernelvec.S, calls kerneltrap().
 void kernelvec();
-
+void passalarm(struct proc *);
 extern int devintr();
 
 void
@@ -67,6 +67,11 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+
+    if (which_dev == 2) {
+      // timmer interrupt
+      passalarm(p);
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
@@ -81,6 +86,25 @@ usertrap(void)
     yield();
 
   usertrapret();
+}
+
+void
+passalarm(struct proc *p) 
+{
+  struct alarm *a = p->alarm;
+  if (a->flag != A_ENABLE) {
+    return;
+  }
+  a->tick += 1;
+  if (a->tick < a->interval) {
+    return;
+  }
+  // save old context
+  a->oldcontext = p->context;
+  a->oldframe = *p->trapframe;
+  // set jump addr to handle
+  p->trapframe->epc = a->handle;
+  a->flag = A_RUNNING;
 }
 
 //
