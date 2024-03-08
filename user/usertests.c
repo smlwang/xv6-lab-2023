@@ -2995,7 +2995,6 @@ countfree()
     printf("pipe() failed in countfree()\n");
     exit(1);
   }
-  
   int pid = fork();
 
   if(pid < 0){

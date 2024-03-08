@@ -315,8 +315,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
-
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
@@ -324,13 +322,19 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    if (flags & PTE_W) {
+      flags |= PTE_PW;
+      flags ^= PTE_W;
+    }
+    *pte = PA2PTE(pa) | flags;
+
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
+      kfree((void *) pa);
       goto err;
     }
+    acquire_ref();
+    add_count((void *)pa);
+    release_ref();
   }
   return 0;
 
@@ -366,9 +370,15 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(va0 >= MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
-    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-       (*pte & PTE_W) == 0)
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
       return -1;
+    if ((*pte & PTE_W) == 0 && (*pte & PTE_PW) == 0) {
+      return -1;
+    }
+    if ((*pte & PTE_PW) != 0) {
+      do_pagefault(pagetable, va0);
+      pte = walk(pagetable, va0, 0);
+    }
     pa0 = PTE2PA(*pte);
     n = PGSIZE - (dstva - va0);
     if(n > len)
@@ -448,4 +458,48 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+int cow(pte_t *pte) {
+  if ((*pte & PTE_PW) == 0) {
+    return -1;
+  }
+  void *opa = (void *)PTE2PA(*pte);
+  acquire_ref();
+  if (get_count(opa) == 1) {
+    // now, the physcial memory is owned by this process.
+    *pte ^= PTE_PW;
+    *pte |= PTE_W;
+    release_ref();
+    return 0;
+  }
+  release_ref();
+
+  char *mem = (char *)kalloc();
+  if (mem == 0) {
+    return -1;
+  }
+  acquire_ref();
+  sub_count(opa);
+  release_ref();
+
+  memmove(mem, opa, PGSIZE);
+
+  uint old_flag = PTE_FLAGS(*pte);
+  *pte = PA2PTE(mem) | old_flag;
+
+  *pte ^= PTE_PW;
+  *pte |= PTE_W;
+  return 0;
+}
+void
+do_pagefault(pagetable_t pagetable, uint64 va)
+{
+  if (va >= MAXVA) {
+    exit(-1);
+  }
+  pte_t *pte = walk(pagetable, va, 0);
+  if ((*pte & PTE_PW) && cow(pte) == 0) {
+    return;
+  }
+  exit(-1);
 }
