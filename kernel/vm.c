@@ -497,6 +497,7 @@ do_pagefault(pagetable_t pagetable, uint64 va)
   if (va >= MAXVA) {
     exit(-1);
   }
+  va = PGROUNDDOWN(va);
   pte_t *pte = walk(pagetable, va, 0);
   if ((*pte & PTE_PW) && cow(pte) == 0) {
     return;
