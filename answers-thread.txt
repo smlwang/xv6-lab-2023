@@ -1,0 +1,4 @@
+Why are there missing keys with 2 threads, but not with 1 thread? 
+data race, assume there are 2 threads A and B. 
+when A put a value, B may put vaule in same place where A is operating.
+then A's value may cover B's.
