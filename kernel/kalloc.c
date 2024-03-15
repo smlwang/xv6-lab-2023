@@ -105,25 +105,18 @@ kalloc(void)
   push_off();
   int cpu = cpuid();
   pop_off();
-  acquire(&kmem[cpu].lock);
-  r = kmem[cpu].freelist;
-  if(r) {
-    kmem[cpu].freelist = r->next;
-  } else {
-    for (int i = 0; i < NCPU; i++) {
-      if (i == cpu) 
-        continue;
-      acquire(&kmem[i].lock);
-      r = kmem[i].freelist;
-      if (r) {
-        kmem[i].freelist = r->next;
-        release(&kmem[i].lock);
-        break;
-      }
-      release(&kmem[i].lock);
+
+  for (int i = 0; i < NCPU; i++) {
+    acquire(&kmem[cpu].lock);
+    r = kmem[cpu].freelist;
+    if (r) {
+      kmem[cpu].freelist = r->next;
+      release(&kmem[cpu].lock);
+      break;
     }
+    release(&kmem[cpu].lock);
+    cpu = (cpu < NCPU - 1) ? cpu + 1 : 0;
   }
-  release(&kmem[cpu].lock);
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
