@@ -27,12 +27,11 @@
 
 struct {
   struct buf buf[NBUF];
-
-  struct spinlock hblock[HBSIZE];
+  uint control;
+  struct spinlock lock; // lock buf
   
-  // restore free block
-  struct buf head;
-  struct spinlock lock; // lock head
+  struct buf hhead[HBSIZE];
+  struct spinlock hblock[HBSIZE];
 } bcache;
 
 void
@@ -41,49 +40,46 @@ binit(void)
   struct buf *b;
 
   initlock(&bcache.lock, "bcache");
-
+  bcache.control = 0x3fffffff;
   char name[16];
   for (int i = 0; i < HBSIZE; i++) {
-    snprintf(name, 15, "bcache_buc%i", i);
-    bcache.buf[i].prev = &bcache.buf[i];
-    bcache.buf[i].next = &bcache.buf[i];
+    int ed = snprintf(name, 15, "bcache_%i", i);
+    name[ed] = 0;
+    bcache.hhead[i].prev = &bcache.hhead[i];
+    bcache.hhead[i].next = &bcache.hhead[i];
+
     initlock(&bcache.hblock[i], name);
   }
-
-  // Create linked list of buffers
-  bcache.head.prev = &bcache.head;
-  bcache.head.next = &bcache.head;
   
-  for(b = bcache.buf + HBSIZE; b < bcache.buf+NBUF; b++){
-    b->next = bcache.head.next;
-    b->prev = &bcache.head;
+  for(b = bcache.buf; b < bcache.buf+NBUF; b++){
     initsleeplock(&b->lock, "buffer");
-    bcache.head.next->prev = b;
-    bcache.head.next = b;
   }
 }
 
 uint hash(uint a, uint b) {
   return (((uint64)a << 32) | b) % HBSIZE;
 }
+static const int bit_map[16] = {-1, 0, 1, 0, 2, 0, 1, 0, 3, 0, 1, 0, 2, 0, 1, 0};
 
-// acquire lock before call this function
+// need acquire lock before call this function
 // pick a free buf from buffer cache
-// if unable to pick, return head
-struct buf*
-pick() {
-  struct buf* b = bcache.head.next;
-  if (b == &bcache.head) {
-    return b;
-  }
-  b->next->prev = b->prev;
-  b->prev->next = b->next;
-  return b;
-}
-
+// if unable to pick, return -1
 int
-is_hashhead(struct buf *b) {
-  return b < bcache.buf + HBSIZE;
+pick(struct buf** b) {
+  uint control = bcache.control;
+  int idx = 0;
+  do {
+    if (bit_map[control & 0xf] == -1) {
+      idx += 4;
+    } else {
+      idx += bit_map[control & 0xf];
+      bcache.control ^= 1 << idx;
+      *b = bcache.buf + idx;
+      return 0;
+    }
+  } while (control >>= 4);
+
+  return -1;
 }
 
 // Look through buffer cache for block on device dev.
@@ -94,20 +90,10 @@ bget(uint dev, uint blockno)
 {
   struct buf *b;
   int bucket_idx = hash(dev, blockno);
-  struct buf *hash_head = &bcache.buf[bucket_idx];
+  struct buf *hash_head = &bcache.hhead[bucket_idx];
   acquire(&bcache.hblock[bucket_idx]);
 
   // Is the block already cached?
-  if (hash_head->dev == dev && hash_head->blockno == blockno) {
-    b = hash_head;
-    if (b->refcnt == 0) {
-      b->valid = 0;
-    }
-    b->refcnt++;
-    release(&bcache.hblock[bucket_idx]);
-    acquiresleep(&b->lock);
-    return b;
-  }
 
   for(b = hash_head->next; b != hash_head; b = b->next){
     if(b->dev == dev && b->blockno == blockno){
@@ -118,19 +104,16 @@ bget(uint dev, uint blockno)
     }
   }
   // Not cached.
-  // Recycle the least recently used (LRU) unused buffer.
-
+  // pick new buffer.
   acquire(&bcache.lock);
-  b = pick();
-  release(&bcache.lock);
-  if (b == &bcache.head) {
+  if (pick(&b) < 0) {
     panic("bget: no buffers");
   }
+  release(&bcache.lock);
   b->dev = dev;
   b->blockno = blockno;
   b->valid = 0;
   b->refcnt = 1;
-
   b->next = hash_head->next;
   b->prev = hash_head;
   hash_head->next->prev = b;
@@ -175,20 +158,14 @@ brelse(struct buf *b)
   releasesleep(&b->lock);
   acquire(&bcache.hblock[bucket_idx]);
   b->refcnt -= 1;
-  if (b->refcnt > 0 || is_hashhead(b)) {
+  if (b->refcnt > 0) {
     release(&bcache.hblock[bucket_idx]);
     return;
   }
+  bcache.control ^= 1 << (b - bcache.buf);
   b->prev->next = b->next;
   b->next->prev = b->prev;
   release(&bcache.hblock[bucket_idx]);
-
-  acquire(&bcache.lock);
-  b->next = bcache.head.next;
-  b->prev = &bcache.head;
-  bcache.head.next->prev = b;
-  bcache.head.next = b;
-  release(&bcache.lock);
 }
 
 void
