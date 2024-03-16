@@ -316,25 +316,6 @@ sys_open(void)
 
   begin_op();
   
-  if ((omode & O_NOFOLLOW) == 0) {
-    int find_limit = 8;
-    while (find_limit--) {
-      if ((ip = namei(path)) == 0 || ip->type != T_SYMLINK)
-        break;
-      ilock(ip);
-      if (readi(ip, 0, (uint64)path, 0, MAXPATH) != MAXPATH) {
-        iunlockput(ip);
-        end_op();
-        return -1;
-      }
-      iunlock(ip);
-    }
-    if (find_limit <= 0) {
-      end_op();
-      return -1;
-    }
-  }
-
   if(omode & O_CREATE){
     ip = create(path, T_FILE, 0, 0);
     if(ip == 0){
@@ -351,6 +332,28 @@ sys_open(void)
       iunlockput(ip);
       end_op();
       return -1;
+    }
+  }
+
+  if (ip->type == T_SYMLINK && (omode & O_NOFOLLOW) == 0) {
+    int find_limit = 8;
+    while (ip->type == T_SYMLINK) {
+      if (find_limit-- <= 0) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      if (readi(ip, 0, (uint64)path, 0, MAXPATH) != MAXPATH) {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      iunlock(ip);
+      if((ip = namei(path)) == 0){
+        end_op();
+        return -1;
+      }
+      ilock(ip);
     }
   }
 
