@@ -1,3 +1,4 @@
+#define LAB_MMAP
 #ifdef LAB_MMAP
 typedef unsigned long size_t;
 typedef long int off_t;
@@ -26,6 +27,8 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+void* mmap(void *addr, size_t len, int prot, int flags, int fd, off_t offset);
+int munmap(void *addr, size_t len);
 #ifdef LAB_NET
 int connect(uint32, uint16, uint16);
 #endif
