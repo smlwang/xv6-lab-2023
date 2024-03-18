@@ -512,7 +512,7 @@ sys_mmap(void)
   int prot;
   int flags;
   int fd;
-  off_t offset;
+  uint64 offset;
   argaddr(0, &addr);
   argaddr(1, &len);
   argint(2, &prot);
@@ -529,27 +529,38 @@ sys_mmap(void)
   } 
   struct proc* p = myproc();
   struct file *file = p->ofile[fd];
-  if (prot & (PROT_READ | PROT_WRITE)) {
-    if (!file->readable) {
-      return -1;
+  if (flags == MAP_SHARED) {
+    if (prot & (PROT_READ | PROT_WRITE)) {
+      if (!file->readable) {
+        return -1;
+      }
+      if (prot & PROT_WRITE) {
+        if (!file->writable) {
+          return -1;
+        }
+      }
     }
-  }
-  if (flags & MAP_SHARED) {
-    if (!file->writable) {
-      return -1;
+  } else { // MAP_PRIVATE
+    if (prot & (PROT_READ | PROT_WRITE)) {
+      if (!file->readable) {
+        return -1;
+      }
     }
   }
   uint64 start = p->sz;
   struct vma* v = p->vmas;
   int ivma = -1;
-  for (int i = 0; i < 16; i++) {
-    uint64 ed = PGROUNDUP(v->addr + v->len);
-    if (ed >= start) {
-      start = ed;
+  for (int i = 0; i < NVMA; i++) {
+    if (v->addr) {
+      uint64 ed = PGROUNDUP(v->addr + v->len);
+      if (ed >= start) {
+        start = ed;
+      }
     }
     if (v->addr == 0 && ivma == -1) {
       ivma = i;
     }
+    v++;
   }
   if (ivma == -1) {
     return -1;
@@ -557,17 +568,23 @@ sys_mmap(void)
   
   v = &p->vmas[ivma];
   v->addr = start;
-  v->file = file;
+  v->file = filedup(file);
   v->len = len;
   v->prot = prot;
   v->flags = flags;
+  v->offset = offset;
 
   return start;
 }
 
+// assume that munmap will either unmap at the start, or at the end, 
+// or the whole region (but not punch a hole in the middle of a region).
 uint64
 sys_munmap(void)
 {
-  
-  return 0;
+  uint64 addr;
+  size_t len;
+  argaddr(0, &addr);
+  argaddr(1, &len);
+  return munmap(addr, len);
 }

@@ -4,6 +4,7 @@
 #include "riscv.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "fcntl.h"
 #include "defs.h"
 
 struct cpu cpus[NCPU];
@@ -307,6 +308,13 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+  
+  for (int i = 0; i < NVMA; i++) {
+    np->vmas[i] = p->vmas[i];
+    if (p->vmas[i].addr) {
+      filedup(p->vmas[i].file);
+    }
+  }
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -359,7 +367,11 @@ exit(int status)
       p->ofile[fd] = 0;
     }
   }
-
+  for (int i = 0; i < NVMA; i++) {
+    if (p->vmas[i].addr) {
+      munmap(p->vmas[i].addr, p->vmas[i].len);
+    }
+  }
   begin_op();
   iput(p->cwd);
   end_op();
@@ -685,4 +697,44 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int
+do_file_pagefault(uint64 va) {
+  struct proc *p = myproc();
+  struct vma *v = p->vmas;
+  int find = 0;
+  for (int i = 0; i < NVMA; i++) {
+    if (v->addr > 0 && v->addr <= va && v->addr + v->len > va) {
+      find = 1;
+      break;
+    }
+    v++;
+  }
+  if (!find) {
+    return -1;
+  }
+  struct file *f = v->file;
+  uint64 offset = va - v->addr + v->offset;
+  uint64 pa;
+  if ((pa = (uint64)kalloc()) == 0) {
+    return -1;
+  }
+  memset((void*)pa, 0, PGSIZE);
+  if (readpage(f, pa, offset) == -1) {
+    kfree((void *)pa);
+    return -1;
+  }
+  int perm = PTE_U;
+  if (v->prot & (PROT_READ | PROT_WRITE)) {
+    perm |= PTE_R;
+  }
+  if (v->prot & PROT_WRITE) {
+    perm |= PTE_W;
+  }
+  if (mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, pa, perm) < 0) {
+    kfree((void *)pa);
+    return -1;
+  }
+  return 0;
 }

@@ -106,9 +106,10 @@ struct proc {
   char name[16];               // Process name (debugging)
   struct vma {
     uint64 addr;
-    size_t len; 
+    unsigned long len; 
     int prot;
     int flags;
     struct file *file;
+    long int offset;
   } vmas[16];
 };

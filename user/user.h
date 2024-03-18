@@ -1,8 +1,7 @@
-#define LAB_MMAP
-#ifdef LAB_MMAP
+
 typedef unsigned long size_t;
 typedef long int off_t;
-#endif
+
 struct stat;
 
 // system calls

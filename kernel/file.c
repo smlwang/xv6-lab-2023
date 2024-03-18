@@ -12,6 +12,7 @@
 #include "file.h"
 #include "stat.h"
 #include "proc.h"
+#include "fcntl.h"
 
 struct devsw devsw[NDEV];
 struct {
@@ -180,3 +181,78 @@ filewrite(struct file *f, uint64 addr, int n)
   return ret;
 }
 
+int
+readpage(struct file* f, uint64 pa, uint64 offset) {
+  printf("readpage\n");
+  uint64 da = PGROUNDDOWN(offset);
+  ilock(f->ip);
+  if (readi(f->ip, 0, pa, da, PGSIZE) < 0) {
+    iunlock(f->ip);
+    return -1;
+  }
+  iunlock(f->ip);
+  return 0;
+}
+
+int
+munmap(uint64 addr, size_t len) {
+  
+  struct proc* p = myproc();
+  
+  if (addr % PGSIZE != 0) {
+    return -1;
+  }
+
+  struct vma *v = 0;
+  struct vma *sv = p->vmas;
+  for (int i = 0; i < NVMA; i++) {
+    if (sv->addr <= addr && sv->addr + sv->len > addr) {
+      v = sv;
+      break;
+    }
+    sv++;
+  }
+  if (v == 0 || (v->addr != addr && v->addr + v->len != addr + len)) {
+    return -1;
+  }
+  if (len % PGSIZE) {
+    return -1;
+  }
+
+  uint64 st = addr, ed = addr + len;
+
+  struct file* f = v->file;
+  for (; addr < ed; addr += PGSIZE) {
+    pte_t *pte = walk(p->pagetable, addr, 0);
+    uint64 pa = walkaddr(p->pagetable, addr);
+    if (v->flags == MAP_SHARED && (*pte & PTE_D)) {
+      uint n = addr + PGSIZE > v->addr + v->len ? v->addr + v->len - addr : PGSIZE;
+      begin_op();
+      ilock(f->ip);
+      int w = writei(f->ip, 0, pa, addr - v->addr + v->offset, n);
+      iunlock(f->ip);
+      end_op();
+      if (w != n) {
+        return -1;
+      }
+    }
+    // user not access that not alloc physical memory yet
+    if (*pte & PTE_V) {
+      uvmunmap(p->pagetable, addr, 1, 1);
+    }
+  }
+  if (v->addr == st) {
+    if (v->addr + v->len == ed) {
+      fileclose(f);
+      v->addr = 0;
+    } else { // v->addr + v->len < ed
+      v->offset += ed - v->addr;
+      v->len -= ed - v->addr;
+      v->addr = ed;
+    }
+  } else {
+    v->len -= ed - st;
+    v->addr = ed;
+  }
+  return 0;
+}
