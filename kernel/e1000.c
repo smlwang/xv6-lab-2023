@@ -103,7 +103,6 @@ e1000_transmit(struct mbuf *m)
   // a pointer so that it can be freed after sending.
   //
   acquire(&e1000_lock);
-  // printf("send\n");
   int tail = regs[E1000_TDT];
 
   struct tx_desc* desc = &tx_ring[tail];
@@ -120,7 +119,7 @@ e1000_transmit(struct mbuf *m)
 
   desc->addr = (uint64) m->head;
   desc->length = m->len;
-  desc->cmd |= E1000_TXD_CMD_EOP;
+  desc->cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;
 
   regs[E1000_TDT] = (tail + 1) % TX_RING_SIZE;
   
@@ -142,30 +141,29 @@ e1000_recv(void)
   // Create and deliver an mbuf for each packet (using net_rx()).
   //
 
-  int tail = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
-  // printf("recv\n");
-  int last = tail;
-
+  struct mbuf *m;
   for (;;) {
+    acquire(&e1000_lock);
+    int tail = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
     struct rx_desc* desc = &rx_ring[tail];
+
     if ((desc->status & E1000_RXD_STAT_DD) == 0) {
-      goto done;
+      release(&e1000_lock);
+      break;
     }
-    struct mbuf *m = rx_mbufs[tail];
+  
+    m = mbufalloc(0);
     m->len = desc->length;
-    net_rx(m);
-    last = tail;
-
-    struct mbuf* new_mbuf = mbufalloc(0);
-    rx_mbufs[tail] = new_mbuf;
+    memmove(m->head, (char *)desc->addr, m->len);
+  
+    regs[E1000_RDT] = tail;
     desc->status = 0;
-    desc->addr = (uint64) new_mbuf->head;
-
-    tail = (tail + 1) % RX_RING_SIZE;
+    release(&e1000_lock);
+    
+    net_rx(m);
+    // pass make grade ?
+    __sync_synchronize();
   }
-
-done:
-  regs[E1000_RDT] = last;
 }
 
 void
